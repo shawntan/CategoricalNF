@@ -668,6 +668,7 @@ class Edge2NodeAttnLayer(nn.Module):
 		edge_indices = (num_nodes - 1 - edge_indices[...,0]) * edge_indices[...,0] + ((edge_indices[...,0] + 1) * edge_indices[...,0]) / 2 + (edge_indices[...,1] - edge_indices[...,0] - 1)
 		edge_indices = edge_indices.clamp(min=0, max=edge_feat.shape[1]-1) # Clamp as padded values might result in indices out of bounds
 		edge_batch_indices = (edge_indices + edge_feat.shape[1] * torch.arange(batch_size, dtype=torch.long, device=edge_indices.device)[:,None]).view(-1)
+		edge_batch_indices = edge_batch_indices.long()
 		edge_feat = edge_feat.view(-1, edge_feat.size(-1)).index_select(index=edge_batch_indices, dim=0).reshape(edge_indices.shape + edge_feat.shape[-1:])
 
 		## Determine value and attention score for each edge. We apply the layers after aligning as many previous might have been invalid/masked

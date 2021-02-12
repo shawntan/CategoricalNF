@@ -8,11 +8,9 @@ from general.mutils import get_param_val, general_args_to_params
 from general.parameter_scheduler import add_scheduler_parameters, scheduler_args_to_params
 from layers.categorical_encoding.mutils import add_encoding_parameters, encoding_args_to_params
 from layers.flows.distributions import add_prior_distribution_parameters, prior_distribution_args_to_params
-
 from experiments.language_modeling.task import TaskLanguageModeling
 from experiments.language_modeling.lstm_model import LSTMModel
 from experiments.language_modeling.flow_model import FlowLanguageModeling
-
 
 class TrainLanguageModeling(TrainTemplate):
 
