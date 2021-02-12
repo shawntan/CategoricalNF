@@ -8,7 +8,6 @@ import json
 import os
 import sys
 sys.path.append("../../../")
-
 from general.mutils import one_hot
 
 

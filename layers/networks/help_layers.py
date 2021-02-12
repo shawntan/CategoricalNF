@@ -129,8 +129,7 @@ def run_padded_LSTM(x, lstm_cell, length, input_memory=None, return_final_states
 		# Sort input elements for efficient LSTM application
 		sorted_lengths, perm_index = length.sort(0, descending=True)
 		x = x[perm_index]
-
-		packed_input = torch.nn.utils.rnn.pack_padded_sequence(x, sorted_lengths, batch_first=True)
+		packed_input = torch.nn.utils.rnn.pack_padded_sequence(x, sorted_lengths.cpu(), batch_first=True)
 		packed_outputs, _ = lstm_cell(packed_input, input_memory)
 		outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(packed_outputs, batch_first=True)
 
