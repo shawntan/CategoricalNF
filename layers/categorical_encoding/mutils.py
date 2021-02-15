@@ -6,7 +6,7 @@ sys.path.append("../../")
 
 from general.mutils import get_param_val
 from layers.categorical_encoding.variational_dequantization import VariationalDequantization
-from layers.categorical_encoding.linear_encoding import LinearCategoricalEncoding
+from layers.categorical_encoding.truncated_linear_encoding import LinearCategoricalEncoding
 from layers.categorical_encoding.variational_encoding import VariationalCategoricalEncoding
 
 
