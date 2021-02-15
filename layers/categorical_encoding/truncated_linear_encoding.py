@@ -65,7 +65,12 @@ class LinearCategoricalEncoding(FlowLayer):
         self.use_decoder = use_decoder
         self.dataset_class = dataset_class
         self.D = num_dimensions
-
+        print("Using truncated logistic")
+        print("Using truncated logistic")
+        print("Using truncated logistic")
+        print("Using truncated logistic")
+        print("Using truncated logistic")
+        print("Using truncated logistic")
         self.embed_layer, self.vocab_size = create_embed_layer(vocab, vocab_size, default_embed_layer_dims)
         self.bounds_emb = nn.Embedding(vocab_size, self.D * 2)
         self.num_categories = self.vocab_size
