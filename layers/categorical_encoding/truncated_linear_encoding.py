@@ -125,7 +125,6 @@ class LinearCategoricalEncoding(FlowLayer):
                 class_prior_log = torch.take(self.category_prior, z_categ.squeeze(dim=-1))
                 log_point_prob = init_log_p - ldj_forward + class_prior_log
                 class_prob_log = self._calculate_true_posterior(z_cont, z_categ, log_point_prob)
-                print(class_prob_log.size())
             else:
                 class_prob_log = self._decoder_forward(z_cont, z_categ)
 
