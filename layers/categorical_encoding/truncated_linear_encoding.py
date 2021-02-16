@@ -202,7 +202,11 @@ class LinearCategoricalEncoding(FlowLayer):
         sample_categ = sample_categ[None, :].expand(z_categ.size(0), -1).reshape(-1, 1)
 
         z_back, ldj_backward = self._flow_forward(z_back_in, sample_categ, reverse=True, **kwargs)
-        back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
+        z_cont_a, z_cont_b = self.bounds_emb(sample_categ).chunk(2, dim=-1)
+        z_start, z_end, _, _, _, log_uni_width = params2bounds(z_cont_a, z_cont_b)
+        mask = ~torch.all((z_start < z_back) & (z_back < z_end), dim=-1)
+        back_log_p = torch.sum(density(z_back) - log_uni_width, dim=-1).masked_fill(mask, -64).sum(dim=-1)
+        # back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
 
         ## Calculate the denominator (sum of probabilities of all classes)
         flow_log_prob = back_log_p + ldj_backward
