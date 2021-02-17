@@ -68,14 +68,11 @@ class LinearCategoricalEncoding(FlowLayer):
         print("Using truncated logistic")
         print("Using truncated logistic")
         print("Using truncated logistic")
-        print("Using truncated logistic")
-        print("Using truncated logistic")
-        print("Using truncated logistic")
         self.embed_layer, self.vocab_size = create_embed_layer(vocab, vocab_size, default_embed_layer_dims)
         self.bounds_emb = nn.Embedding(vocab_size, self.D * 2)
         self.num_categories = self.vocab_size
 
-        self.prior_distribution = LogisticDistribution(mu=0.0, sigma=1.0)  # Prior distribution in encoding flows
+        # self.prior_distribution = LogisticDistribution(mu=0.0, sigma=1.0)  # Prior distribution in encoding flows
         self.flow_layers = _create_flows(num_dims=num_dimensions,
                                          embed_dims=self.embed_layer.weight.shape[1],
                                          config=flow_config)
@@ -96,6 +93,10 @@ class LinearCategoricalEncoding(FlowLayer):
                 category_prior = torch.from_numpy(category_prior)
         self.register_buffer("category_prior", F.log_softmax(category_prior, dim=-1))
 
+    def z_bounds(self, z_categ):
+        z_a, z_b = self.bounds_emb(z_categ).chunk(2, dim=-1)
+        return z_a - 1, z_b + 1
+
     def forward(self, z, ldj=None, reverse=False, beta=1, delta=0.0, channel_padding_mask=None, **kwargs):
         ## We reshape z into [batch, 1, ...] as every categorical variable is considered to be independent.
         batch_size, seq_length = z.size(0), z.size(1)
@@ -112,7 +113,7 @@ class LinearCategoricalEncoding(FlowLayer):
             # z is of shape [Batch, SeqLength]
             z_categ = z  # Renaming here for better readability (what is discrete and what is continuous)
             ## 1.) Forward pass of current token flow
-            z_cont_a, z_cont_b = self.bounds_emb(z_categ).chunk(2, dim=-1)
+            z_cont_a, z_cont_b = self.z_bounds(z_categ)
             z_cont, init_log_p = sample_trunc_log(z_cont_a, z_cont_b)
             init_log_p = init_log_p.sum(dim=-1)
             # z_cont = self.prior_distribution.sample(shape=(batch_size * seq_length, 1, self.D)).to(z_categ.device)
@@ -202,7 +203,7 @@ class LinearCategoricalEncoding(FlowLayer):
         sample_categ = sample_categ[None, :].expand(z_categ.size(0), -1).reshape(-1, 1)
 
         z_back, ldj_backward = self._flow_forward(z_back_in, sample_categ, reverse=True, **kwargs)
-        z_cont_a, z_cont_b = self.bounds_emb(sample_categ).chunk(2, dim=-1)
+        z_cont_a, z_cont_b = self.z_bounds(sample_categ)
         z_start, z_end, _, _, _, log_uni_width = params2bounds(z_cont_a, z_cont_b)
         mask = ~torch.all((z_start < z_back) & (z_back < z_end), dim=-1)
         back_log_p = torch.sum(density(z_back) - log_uni_width, dim=-1).masked_fill(mask, -64).sum(dim=-1)
@@ -249,7 +250,7 @@ class LinearCategoricalEncoding(FlowLayer):
             s += "Linear Encodings of categories, with %i dimensions and %i flows.\n" % (self.D, len(self.flow_layers))
         else:
             s += "Mixture model encoding of categories with %i dimensions\n" % (self.D)
-        s += "-> Prior distribution: %s\n" % self.prior_distribution.info()
+        # s += "-> Prior distribution: %s\n" % self.prior_distribution.info()
         if self.use_decoder:
             s += "-> Decoder network: %s\n" % self.decoder.info()
         s += "\n".join(
