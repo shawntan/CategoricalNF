@@ -24,13 +24,18 @@ def log_width(start, end):
     log_num = torch.log(1 - torch.exp(diff)) + end
     return log_num - log_denom
 
+init_width = 5.
 def params2bounds(a, b):
-    start = a - 2
-    width = F.softplus(b) + 3
+    init_width_ = torch.tensor(init_width, device=a.device)
+    init_b = torch.log(torch.exp(init_width_) - 1)
+    start = a - (init_width_ / 2.)
+    width = F.softplus(b + init_b)
     end = start + width
     log_uni_start = F.logsigmoid(start)
     log_uni_end = F.logsigmoid(end)
     log_uni_width = log_width(start, end)
+    print(a.mean())
+    print(start.mean(), width.mean(), end.mean())
     return (start, end, width,
             log_uni_start,
             log_uni_end,
@@ -70,6 +75,7 @@ class LinearCategoricalEncoding(FlowLayer):
         print("Using truncated logistic")
         self.embed_layer, self.vocab_size = create_embed_layer(vocab, vocab_size, default_embed_layer_dims)
         self.bounds_emb = nn.Embedding(vocab_size, self.D * 2)
+        torch.nn.init.normal_(self.bounds_emb.weight)
         self.num_categories = self.vocab_size
 
         # self.prior_distribution = LogisticDistribution(mu=0.0, sigma=1.0)  # Prior distribution in encoding flows
