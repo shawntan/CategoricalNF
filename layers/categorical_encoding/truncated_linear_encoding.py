@@ -34,8 +34,6 @@ def params2bounds(a, b):
     log_uni_start = F.logsigmoid(start)
     log_uni_end = F.logsigmoid(end)
     log_uni_width = log_width(start, end)
-    print(a.mean())
-    print(start.mean(), width.mean(), end.mean())
     return (start, end, width,
             log_uni_start,
             log_uni_end,
