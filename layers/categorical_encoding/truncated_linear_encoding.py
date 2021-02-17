@@ -25,8 +25,8 @@ def log_width(start, end):
     return log_num - log_denom
 
 def params2bounds(a, b):
-    start = a
-    width = F.softplus(b)
+    start = a - 2
+    width = F.softplus(b) + 3
     end = start + width
     log_uni_start = F.logsigmoid(start)
     log_uni_end = F.logsigmoid(end)
@@ -95,7 +95,7 @@ class LinearCategoricalEncoding(FlowLayer):
 
     def z_bounds(self, z_categ):
         z_a, z_b = self.bounds_emb(z_categ).chunk(2, dim=-1)
-        return z_a - 1, z_b + 1
+        return z_a, z_b
 
     def forward(self, z, ldj=None, reverse=False, beta=1, delta=0.0, channel_padding_mask=None, **kwargs):
         ## We reshape z into [batch, 1, ...] as every categorical variable is considered to be independent.
