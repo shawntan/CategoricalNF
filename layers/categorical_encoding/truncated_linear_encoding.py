@@ -28,17 +28,14 @@ init_width = 3.
 logistic_std = torch.tensor(1.81)
 
 def params2bounds(a, b):
-    init_width_ = torch.tensor(init_width, device=a.device)
-    init_b = torch.log(torch.exp(init_width_) - 1)
-    start = a - (init_width_ / 2.)
-    width = F.softplus(b + init_b)
-    end = start + width
+    start = a
     log_uni_start = F.logsigmoid(start)
-    log_uni_end = F.logsigmoid(end)
-    log_uni_width = log_width(start, end)
-    # print(log_uni_start.exp().mean().item(),
-    #       log_uni_end.exp().mean().item(),
-    #       log_uni_width.exp().mean().item())
+    log_uni_width = F.logsigmoid(-a) + F.logsigmoid(b)
+    uni_end = torch.exp(log_uni_start) + torch.exp(log_uni_width)
+    log_uni_end = torch.log(uni_end)
+    end = sigmoid_inv(uni_end)
+    width = end - start
+    print(start.mean().item(), end.mean().item(), width.mean().item())
     return (start, end, width,
             log_uni_start,
             log_uni_end,
