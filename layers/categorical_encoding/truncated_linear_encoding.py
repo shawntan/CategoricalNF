@@ -24,7 +24,7 @@ def log_width(start, end):
     log_num = torch.log(1 - torch.exp(diff)) + end
     return log_num - log_denom
 
-init_width = 5.
+init_width = 3.
 logistic_std = torch.tensor(1.81)
 
 def params2bounds(a, b):
@@ -36,9 +36,9 @@ def params2bounds(a, b):
     log_uni_start = F.logsigmoid(start)
     log_uni_end = F.logsigmoid(end)
     log_uni_width = log_width(start, end)
-    print(log_uni_start.exp().mean(),
-          log_uni_end.exp().mean(),
-          log_uni_width.exp().mean())
+    # print(log_uni_start.exp().mean().item(),
+    #       log_uni_end.exp().mean().item(),
+    #       log_uni_width.exp().mean().item())
     return (start, end, width,
             log_uni_start,
             log_uni_end,
@@ -52,6 +52,7 @@ def truncated_density(z, a, b, log_uni_width=None):
     if log_uni_width is None:
         _, _, _, log_uni_start, _, log_uni_width = params2bounds(a, b)
     # c = torch.tensor(logistic_std, device=z.device)
+    # print(log_uni_width.max().item(), log_uni_width.min().item())
     log_d = density(z * logistic_std) - log_uni_width + torch.log(logistic_std)
     return log_d.sum(dim=-1)
 
@@ -88,7 +89,7 @@ class LinearCategoricalEncoding(FlowLayer):
         torch.nn.init.normal_(self.bounds_emb.weight)
         self.num_categories = self.vocab_size
 
-        # self.prior_distribution = LogisticDistribution(mu=0.0, sigma=1.0)  # Prior distribution in encoding flows
+        self.prior_distribution = LogisticDistribution(mu=0.0, sigma=1.0)  # Prior distribution in encoding flows
         self.flow_layers = _create_flows(num_dims=num_dimensions,
                                          embed_dims=self.embed_layer.weight.shape[1],
                                          config=flow_config)
@@ -219,12 +220,12 @@ class LinearCategoricalEncoding(FlowLayer):
         sample_categ = sample_categ[None, :].expand(z_categ.size(0), -1).reshape(-1, 1)
 
         z_back, ldj_backward = self._flow_forward(z_back_in, sample_categ, reverse=True, **kwargs)
-        z_cont_a, z_cont_b = self.z_bounds(sample_categ)
-        z_start, z_end, _, _, _, log_uni_width = params2bounds(z_cont_a, z_cont_b)
-        mask = ~torch.all((z_start < z_back) & (z_back < z_end), dim=-1)
-        back_log_p = truncated_density(z_back, z_cont_a, z_cont_b, log_uni_width).masked_fill(mask, -84).sum(dim=-1)
+        # z_cont_a, z_cont_b = self.z_bounds(sample_categ)
+        # z_start, z_end, _, _, _, log_uni_width = params2bounds(z_cont_a, z_cont_b)
+        # mask = ~torch.all((z_start < z_back) & (z_back < z_end), dim=-1)
+        # back_log_p = truncated_density(z_back, z_cont_a, z_cont_b, log_uni_width).masked_fill(mask, -84).sum(dim=-1)
         # back_log_p = torch.sum(density(z_back) - log_uni_width, dim=-1).masked_fill(mask, -64).sum(dim=-1)
-        # back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
+        back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
 
         ## Calculate the denominator (sum of probabilities of all classes)
         flow_log_prob = back_log_p + ldj_backward
