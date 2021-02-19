@@ -19,6 +19,7 @@ def sigmoid_inv(p):
     return torch.log(p) - torch.log(1 - p)
 
 def params2bounds(trunc_params):
+    trunc_params[..., 1] = trunc_params[..., 1] - 5
     log_segments = torch.log_softmax(trunc_params, dim=-1)
     log_uni_start = log_segments[..., 0]
     log_uni_width = log_segments[..., 1]
@@ -45,13 +46,13 @@ def truncated_density(z, trunc_params,
                       log_uni_end=None,
                       log_uni_width=None,
                       return_zero_mask=False):
-    if log_uni_width is None:
+    if log_uni_start is None or log_uni_end is None or log_uni_width is None:
         _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(trunc_params)
     log_p_z_ = (density(z) - log_uni_width).sum(dim=-1)
     p = torch.sigmoid(z)
-    no_density = ~torch.all((p > torch.exp(log_uni_start)) &
-                            (p < torch.exp(log_uni_end)),
-                            dim=-1)
+    no_density = torch.any((p < torch.exp(log_uni_start)) |
+                           (p > torch.exp(log_uni_end)),
+                           dim=-1)
     log_p_z = log_p_z_.masked_fill(no_density, -64)
     if return_zero_mask:
         return log_p_z, no_density
@@ -63,7 +64,10 @@ def sample_trunc_log(trunc_params):
     z_0 = (torch.exp(log_uni_start) +
            torch.rand_like(trunc_params[..., 0]) * torch.exp(log_uni_width))
     z_1 = sigmoid_inv(z_0)
-    return z_1, truncated_density(z_1, trunc_params, log_uni_width, log_uni_start)
+    return z_1, truncated_density(z_1, trunc_params,
+                                  log_uni_start,
+                                  log_uni_end,
+                                  log_uni_width)
 
 class LinearCategoricalEncoding(FlowLayer):
     """
@@ -231,8 +235,9 @@ class LinearCategoricalEncoding(FlowLayer):
         # print(z_back.size())
         back_log_p, zero_mask = truncated_density(z_back, z_trunc_params,
                                                   return_zero_mask=True)
+
         back_log_p = back_log_p[..., 0]
-        # zero_mask = zero_mask[..., 0]
+        zero_mask = zero_mask[..., 0]
         # print(back_log_p.size())
         # back_log_p = torch.sum(density(z_back) - log_uni_width, dim=-1).masked_fill(mask, -64).sum(dim=-1)
         # back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
@@ -241,6 +246,7 @@ class LinearCategoricalEncoding(FlowLayer):
         ## Calculate the denominator (sum of probabilities of all classes)
         flow_log_prob = back_log_p + ldj_backward
         log_prob_denominator = flow_log_prob.view(z_cont.size(0), self.num_categories) + self.category_prior[None, :]
+        # print(zero_mask.view(z_cont.size(0), self.num_categories).long())
         # Replace log_prob of original class with forward probability
         # This improves stability and prevents the model to exploit numerical errors during inverting the flows
 
@@ -248,13 +254,12 @@ class LinearCategoricalEncoding(FlowLayer):
         log_prob_denominator = log_prob_denominator * (1 - orig_class_mask) + log_point_prob.unsqueeze(dim=-1) * orig_class_mask
         # Denominator is the sum of probability -> turn log to exp, and back to log
         log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
-
         ## Combine nominator and denominator for final prob log
         class_prob_log = (log_point_prob - log_denominator)
         # *** End *** 
         # class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
         #                                   reduction='none')
-        print(class_prob_log.mean())
+        # print(class_prob_log.mean())
         return class_prob_log
 
     def _decoder_sample(self, z_cont, **kwargs):
