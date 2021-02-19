@@ -246,7 +246,8 @@ class LinearCategoricalEncoding(FlowLayer):
         ## Calculate the denominator (sum of probabilities of all classes)
         flow_log_prob = back_log_p + ldj_backward
         log_prob_denominator = flow_log_prob.view(z_cont.size(0), self.num_categories) + self.category_prior[None, :]
-        # print(zero_mask.view(z_cont.size(0), self.num_categories).long())
+        print("Activated:",
+              (~zero_mask).view(z_cont.size(0), self.num_categories).float().sum(-1).mean().item())
         # Replace log_prob of original class with forward probability
         # This improves stability and prevents the model to exploit numerical errors during inverting the flows
 
