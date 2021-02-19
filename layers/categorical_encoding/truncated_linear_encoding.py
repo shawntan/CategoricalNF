@@ -18,19 +18,18 @@ from layers.categorical_encoding.decoder import create_decoder, create_embed_lay
 def sigmoid_inv(p):
     return torch.log(p) - torch.log(1 - p)
 
-def params2bounds(a, b):
-    a_ = a # - (init_width / 2)
-    b_ = b # + init_width
-    log_uni_start = F.logsigmoid(a_)
-    log_uni_width = F.logsigmoid(-a_) + F.logsigmoid(-b_)
+def params2bounds(trunc_params):
+    log_segments = torch.log_softmax(trunc_params, dim=-1)
+    log_uni_start = log_segments[..., 0]
+    log_uni_width = log_segments[..., 1]
     start = sigmoid_inv(torch.exp(log_uni_start))
     uni_end = torch.exp(log_uni_start) + torch.exp(log_uni_width)
     log_uni_end = torch.log(uni_end)
     end = sigmoid_inv(uni_end)
     width = end - start
-    print((start.mean().item(), start.std().item()),
-          (width.mean().item(), width.std().item()),
-          (end.mean().item(), end.std().item()))
+    print((log_uni_start.exp().mean().item(), log_uni_start.exp().std().item()),
+          (log_uni_width.exp().mean().item(), log_uni_width.exp().std().item()),
+          (uni_end.mean().item(), uni_end.std().item()))
     return (start, end, width,
             log_uni_start,
             log_uni_end,
@@ -41,13 +40,13 @@ def density(z_0):
     d = F.logsigmoid(z_0) + F.logsigmoid(-z_0)
     return d
 
-def truncated_density(z, a, b,
+def truncated_density(z, trunc_params,
                       log_uni_start=None,
                       log_uni_end=None,
                       log_uni_width=None,
                       return_zero_mask=False):
     if log_uni_width is None:
-        _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(a, b)
+        _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(trunc_params)
     log_p_z_ = (density(z) - log_uni_width).sum(dim=-1)
     p = torch.sigmoid(z)
     no_density = ~torch.all((p > torch.exp(log_uni_start)) &
@@ -59,12 +58,12 @@ def truncated_density(z, a, b,
     else:
         return log_p_z
 
-def sample_trunc_log(a, b):
-    _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(a, b)
+def sample_trunc_log(trunc_params):
+    _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(trunc_params)
     z_0 = (torch.exp(log_uni_start) +
-           torch.rand_like(a) * torch.exp(log_uni_width))
+           torch.rand_like(trunc_params[..., 0]) * torch.exp(log_uni_width))
     z_1 = sigmoid_inv(z_0)
-    return z_1, truncated_density(z_1, a, b, log_uni_width, log_uni_start)
+    return z_1, truncated_density(z_1, trunc_params, log_uni_width, log_uni_start)
 
 class LinearCategoricalEncoding(FlowLayer):
     """
@@ -88,8 +87,9 @@ class LinearCategoricalEncoding(FlowLayer):
         print("Using truncated logistic")
         print("Using truncated logistic")
         self.embed_layer, self.vocab_size = create_embed_layer(vocab, vocab_size, default_embed_layer_dims)
-        self.bounds_emb = nn.Embedding(vocab_size, self.D * 2)
-        torch.nn.init.normal_(self.bounds_emb.weight)
+        self.bounds_emb = nn.Embedding(vocab_size, self.D * 3)
+        torch.nn.init.xavier_normal_(self.bounds_emb.weight)
+
         self.num_categories = self.vocab_size
 
         self.prior_distribution = LogisticDistribution(mu=0.0, sigma=1.0)  # Prior distribution in encoding flows
@@ -114,8 +114,10 @@ class LinearCategoricalEncoding(FlowLayer):
         self.register_buffer("category_prior", F.log_softmax(category_prior, dim=-1))
 
     def z_bounds(self, z_categ):
-        z_a, z_b = self.bounds_emb(z_categ).chunk(2, dim=-1)
-        return z_a, z_b
+        z_trunc_params = self.bounds_emb(z_categ)
+        z_trunc_params = z_trunc_params.view(*(z_trunc_params.size()[:-1]),
+                                             self.bounds_emb.embedding_dim // 3, 3)
+        return z_trunc_params
 
     def forward(self, z, ldj=None, reverse=False, beta=1, delta=0.0, channel_padding_mask=None, **kwargs):
         ## We reshape z into [batch, 1, ...] as every categorical variable is considered to be independent.
@@ -133,8 +135,8 @@ class LinearCategoricalEncoding(FlowLayer):
             # z is of shape [Batch, SeqLength]
             z_categ = z  # Renaming here for better readability (what is discrete and what is continuous)
             ## 1.) Forward pass of current token flow
-            z_cont_a, z_cont_b = self.z_bounds(z_categ)
-            z_cont, init_log_p = sample_trunc_log(z_cont_a, z_cont_b)
+            z_trunc_params = self.z_bounds(z_categ)
+            z_cont, init_log_p = sample_trunc_log(z_trunc_params)
             init_log_p = init_log_p[..., 0]
             # z_cont = self.prior_distribution.sample(shape=(batch_size * seq_length, 1, self.D)).to(z_categ.device)
             # init_log_p = self.prior_distribution.log_prob(z_cont).sum(dim=[1, 2])
@@ -223,12 +225,12 @@ class LinearCategoricalEncoding(FlowLayer):
         sample_categ = sample_categ[None, :].expand(z_categ.size(0), -1).reshape(-1, 1)
 
         z_back, ldj_backward = self._flow_forward(z_back_in, sample_categ, reverse=True, **kwargs)
-        z_cont_a, z_cont_b = self.z_bounds(sample_categ)
+        z_trunc_params = self.z_bounds(sample_categ)
         # _, _, _, _, _, log_uni_width = params2bounds(z_cont_a, z_cont_b)
         # mask = ~torch.all((z_start < z_back) & (z_back < z_end), dim=-1)
         # print(z_back.size())
-        back_log_p, zero_mask = truncated_density(z_back, z_cont_a, z_cont_b,
-                                       return_zero_mask=True)
+        back_log_p, zero_mask = truncated_density(z_back, z_trunc_params,
+                                                  return_zero_mask=True)
         back_log_p = back_log_p[..., 0]
         # zero_mask = zero_mask[..., 0]
         # print(back_log_p.size())
