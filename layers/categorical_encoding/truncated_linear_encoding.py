@@ -28,9 +28,9 @@ def params2bounds(a, b):
     log_uni_end = torch.log(uni_end)
     end = sigmoid_inv(uni_end)
     width = end - start
-    # print((start.mean().item(), start.std().item()),
-    #       (width.mean().item(), width.std().item()),
-    #       (end.mean().item(), end.std().item()))
+    print((start.mean().item(), start.std().item()),
+          (width.mean().item(), width.std().item()),
+          (end.mean().item(), end.std().item()))
     return (start, end, width,
             log_uni_start,
             log_uni_end,
@@ -230,7 +230,7 @@ class LinearCategoricalEncoding(FlowLayer):
         back_log_p, zero_mask = truncated_density(z_back, z_cont_a, z_cont_b,
                                        return_zero_mask=True)
         back_log_p = back_log_p[..., 0]
-        zero_mask = zero_mask[..., 0]
+        # zero_mask = zero_mask[..., 0]
         # print(back_log_p.size())
         # back_log_p = torch.sum(density(z_back) - log_uni_width, dim=-1).masked_fill(mask, -64).sum(dim=-1)
         # back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
@@ -241,18 +241,18 @@ class LinearCategoricalEncoding(FlowLayer):
         log_prob_denominator = flow_log_prob.view(z_cont.size(0), self.num_categories) + self.category_prior[None, :]
         # Replace log_prob of original class with forward probability
         # This improves stability and prevents the model to exploit numerical errors during inverting the flows
-        # *** Taken out because doesn't work in current set up ***
-        # orig_class_mask = one_hot(z_categ.squeeze(), num_classes=log_prob_denominator.size(1))
-        # log_prob_denominator = log_prob_denominator * (1 - orig_class_mask) + log_point_prob.unsqueeze(
-        #     dim=-1) * orig_class_mask
+
+        orig_class_mask = one_hot(z_categ.squeeze(), num_classes=log_prob_denominator.size(1))
+        log_prob_denominator = log_prob_denominator * (1 - orig_class_mask) + log_point_prob.unsqueeze(dim=-1) * orig_class_mask
         # Denominator is the sum of probability -> turn log to exp, and back to log
-        # log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
+        log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
 
         ## Combine nominator and denominator for final prob log
-        # class_prob_log = (log_point_prob - log_denominator)
+        class_prob_log = (log_point_prob - log_denominator)
         # *** End *** 
-        class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
-                                          reduction='none')
+        # class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
+        #                                   reduction='none')
+        print(class_prob_log.mean())
         return class_prob_log
 
     def _decoder_sample(self, z_cont, **kwargs):
