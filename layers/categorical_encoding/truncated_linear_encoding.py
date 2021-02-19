@@ -18,24 +18,19 @@ from layers.categorical_encoding.decoder import create_decoder, create_embed_lay
 def sigmoid_inv(p):
     return torch.log(p) - torch.log(1 - p)
 
-def log_width(start, end):
-    log_denom = F.softplus(start) + F.softplus(end)
-    diff = start - end
-    log_num = torch.log(1 - torch.exp(diff)) + end
-    return log_num - log_denom
-
-init_width = 3.
-logistic_std = torch.tensor(1.81)
-
 def params2bounds(a, b):
-    start = a
-    log_uni_start = F.logsigmoid(start)
-    log_uni_width = F.logsigmoid(-a) + F.logsigmoid(b)
+    a_ = a # - (init_width / 2)
+    b_ = b # + init_width
+    log_uni_start = F.logsigmoid(a_)
+    log_uni_width = F.logsigmoid(-a_) + F.logsigmoid(-b_)
+    start = sigmoid_inv(torch.exp(log_uni_start))
     uni_end = torch.exp(log_uni_start) + torch.exp(log_uni_width)
     log_uni_end = torch.log(uni_end)
     end = sigmoid_inv(uni_end)
     width = end - start
-    print(start.mean().item(), end.mean().item(), width.mean().item())
+    # print((start.mean().item(), start.std().item()),
+    #       (width.mean().item(), width.std().item()),
+    #       (end.mean().item(), end.std().item()))
     return (start, end, width,
             log_uni_start,
             log_uni_end,
@@ -48,16 +43,17 @@ def density(z_0):
 def truncated_density(z, a, b, log_uni_width=None):
     if log_uni_width is None:
         _, _, _, log_uni_start, _, log_uni_width = params2bounds(a, b)
-    # c = torch.tensor(logistic_std, device=z.device)
-    # print(log_uni_width.max().item(), log_uni_width.min().item())
-    log_d = density(z * logistic_std) - log_uni_width + torch.log(logistic_std)
+    log_d = density(z) - log_uni_width
     return log_d.sum(dim=-1)
 
 def sample_trunc_log(a, b):
-    # c = torch.tensor(logistic_std, device=a.device)
     _, _, _, log_uni_start, _, log_uni_width = params2bounds(a, b)
-    z_0 = torch.rand_like(a) * torch.exp(log_uni_width) + torch.exp(log_uni_start)
-    z_1 = sigmoid_inv(z_0) / logistic_std
+    z_0 = (torch.exp(log_uni_start) +
+           torch.rand_like(a) * torch.exp(log_uni_width))
+    # print(torch.exp(log_uni_start).max(), torch.exp(log_uni_start).min())
+    # print(torch.exp(log_uni_width).max(), torch.exp(log_uni_width).min())
+    assert torch.all((z_0 <= 1) & (z_0 >= 0))
+    z_1 = sigmoid_inv(z_0)
     return z_1, truncated_density(z_1, a, b, log_uni_width)
 
 class LinearCategoricalEncoding(FlowLayer):
@@ -129,7 +125,7 @@ class LinearCategoricalEncoding(FlowLayer):
             ## 1.) Forward pass of current token flow
             z_cont_a, z_cont_b = self.z_bounds(z_categ)
             z_cont, init_log_p = sample_trunc_log(z_cont_a, z_cont_b)
-            init_log_p = init_log_p.sum(dim=-1)
+            init_log_p = init_log_p[..., 0]
             # z_cont = self.prior_distribution.sample(shape=(batch_size * seq_length, 1, self.D)).to(z_categ.device)
             # init_log_p = self.prior_distribution.log_prob(z_cont).sum(dim=[1, 2])
 
@@ -217,6 +213,7 @@ class LinearCategoricalEncoding(FlowLayer):
         sample_categ = sample_categ[None, :].expand(z_categ.size(0), -1).reshape(-1, 1)
 
         z_back, ldj_backward = self._flow_forward(z_back_in, sample_categ, reverse=True, **kwargs)
+
         # z_cont_a, z_cont_b = self.z_bounds(sample_categ)
         # z_start, z_end, _, _, _, log_uni_width = params2bounds(z_cont_a, z_cont_b)
         # mask = ~torch.all((z_start < z_back) & (z_back < z_end), dim=-1)
@@ -229,14 +226,18 @@ class LinearCategoricalEncoding(FlowLayer):
         log_prob_denominator = flow_log_prob.view(z_cont.size(0), self.num_categories) + self.category_prior[None, :]
         # Replace log_prob of original class with forward probability
         # This improves stability and prevents the model to exploit numerical errors during inverting the flows
-        orig_class_mask = one_hot(z_categ.squeeze(), num_classes=log_prob_denominator.size(1))
-        log_prob_denominator = (log_prob_denominator * (1 - orig_class_mask) +
-                                log_point_prob.unsqueeze(dim=-1) * orig_class_mask)
+        # *** Taken out because doesn't work in current set up ***
+        # orig_class_mask = one_hot(z_categ.squeeze(), num_classes=log_prob_denominator.size(1))
+        # log_prob_denominator = log_prob_denominator * (1 - orig_class_mask) + log_point_prob.unsqueeze(
+        #     dim=-1) * orig_class_mask
         # Denominator is the sum of probability -> turn log to exp, and back to log
-        log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
+        # log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
 
         ## Combine nominator and denominator for final prob log
-        class_prob_log = (log_point_prob - log_denominator)
+        # class_prob_log = (log_point_prob - log_denominator)
+        # *** End *** 
+        class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
+                                          reduction='none')
         return class_prob_log
 
     def _decoder_sample(self, z_cont, **kwargs):
