@@ -36,25 +36,35 @@ def params2bounds(a, b):
             log_uni_end,
             log_uni_width)
 
+
 def density(z_0):
     d = F.logsigmoid(z_0) + F.logsigmoid(-z_0)
     return d
 
-def truncated_density(z, a, b, log_uni_width=None):
+def truncated_density(z, a, b,
+                      log_uni_start=None,
+                      log_uni_end=None,
+                      log_uni_width=None,
+                      return_zero_mask=False):
     if log_uni_width is None:
-        _, _, _, log_uni_start, _, log_uni_width = params2bounds(a, b)
-    log_d = density(z) - log_uni_width
-    return log_d.sum(dim=-1)
+        _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(a, b)
+    log_p_z_ = (density(z) - log_uni_width).sum(dim=-1)
+    p = torch.sigmoid(z)
+    no_density = ~torch.all((p > torch.exp(log_uni_start)) &
+                            (p < torch.exp(log_uni_end)),
+                            dim=-1)
+    log_p_z = log_p_z_.masked_fill(no_density, -64)
+    if return_zero_mask:
+        return log_p_z, no_density
+    else:
+        return log_p_z
 
 def sample_trunc_log(a, b):
-    _, _, _, log_uni_start, _, log_uni_width = params2bounds(a, b)
+    _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(a, b)
     z_0 = (torch.exp(log_uni_start) +
            torch.rand_like(a) * torch.exp(log_uni_width))
-    # print(torch.exp(log_uni_start).max(), torch.exp(log_uni_start).min())
-    # print(torch.exp(log_uni_width).max(), torch.exp(log_uni_width).min())
-    assert torch.all((z_0 <= 1) & (z_0 >= 0))
     z_1 = sigmoid_inv(z_0)
-    return z_1, truncated_density(z_1, a, b, log_uni_width)
+    return z_1, truncated_density(z_1, a, b, log_uni_width, log_uni_start)
 
 class LinearCategoricalEncoding(FlowLayer):
     """
@@ -213,13 +223,18 @@ class LinearCategoricalEncoding(FlowLayer):
         sample_categ = sample_categ[None, :].expand(z_categ.size(0), -1).reshape(-1, 1)
 
         z_back, ldj_backward = self._flow_forward(z_back_in, sample_categ, reverse=True, **kwargs)
-
-        # z_cont_a, z_cont_b = self.z_bounds(sample_categ)
-        # z_start, z_end, _, _, _, log_uni_width = params2bounds(z_cont_a, z_cont_b)
+        z_cont_a, z_cont_b = self.z_bounds(sample_categ)
+        # _, _, _, _, _, log_uni_width = params2bounds(z_cont_a, z_cont_b)
         # mask = ~torch.all((z_start < z_back) & (z_back < z_end), dim=-1)
-        # back_log_p = truncated_density(z_back, z_cont_a, z_cont_b, log_uni_width).masked_fill(mask, -84).sum(dim=-1)
+        # print(z_back.size())
+        back_log_p, zero_mask = truncated_density(z_back, z_cont_a, z_cont_b,
+                                       return_zero_mask=True)
+        back_log_p = back_log_p[..., 0]
+        zero_mask = zero_mask[..., 0]
+        # print(back_log_p.size())
         # back_log_p = torch.sum(density(z_back) - log_uni_width, dim=-1).masked_fill(mask, -64).sum(dim=-1)
-        back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
+        # back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
+        # print(back_log_p.size())
 
         ## Calculate the denominator (sum of probabilities of all classes)
         flow_log_prob = back_log_p + ldj_backward
