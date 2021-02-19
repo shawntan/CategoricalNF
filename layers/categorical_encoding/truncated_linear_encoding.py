@@ -259,7 +259,7 @@ class LinearCategoricalEncoding(FlowLayer):
         # *** End *** 
         # class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
         #                                   reduction='none')
-        # print(class_prob_log.mean())
+        print(class_prob_log.mean())
         return class_prob_log
 
     def _decoder_sample(self, z_cont, **kwargs):
