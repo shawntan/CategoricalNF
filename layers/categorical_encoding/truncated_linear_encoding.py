@@ -15,12 +15,15 @@ from layers.flows.distributions import LogisticDistribution
 from layers.networks.help_layers import SimpleLinearLayer, LinearNet
 from layers.categorical_encoding.decoder import create_decoder, create_embed_layer
 
+corr_f = torch.tensor(1.81)
+DEBUG = False
+
 def sigmoid_inv(p):
     return torch.log(p) - torch.log(1 - p)
 
 def params2bounds(trunc_params):
-    trunc_params[..., 1] = trunc_params[..., 1] - 5
-    log_segments = torch.log_softmax(trunc_params, dim=-1)
+    trunc_params[..., 1] = trunc_params[..., 1] + 2.5 * (1 / 0.1)
+    log_segments = torch.log_softmax(0.1 * trunc_params, dim=-1)
     log_uni_start = log_segments[..., 0]
     log_uni_width = log_segments[..., 1]
     start = sigmoid_inv(torch.exp(log_uni_start))
@@ -28,9 +31,10 @@ def params2bounds(trunc_params):
     log_uni_end = torch.log(uni_end)
     end = sigmoid_inv(uni_end)
     width = end - start
-    print((log_uni_start.exp().mean().item(), log_uni_start.exp().std().item()),
-          (log_uni_width.exp().mean().item(), log_uni_width.exp().std().item()),
-          (uni_end.mean().item(), uni_end.std().item()))
+    if DEBUG:
+        print((log_uni_start.exp().mean().item(), log_uni_start.exp().std().item()),
+              (log_uni_width.exp().mean().item(), log_uni_width.exp().std().item()),
+              (uni_end.mean().item(), uni_end.std().item()))
     return (start, end, width,
             log_uni_start,
             log_uni_end,
@@ -48,7 +52,7 @@ def truncated_density(z, trunc_params,
                       return_zero_mask=False):
     if log_uni_start is None or log_uni_end is None or log_uni_width is None:
         _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(trunc_params)
-    log_p_z_ = (density(z) - log_uni_width).sum(dim=-1)
+    log_p_z_ = (density(z * corr_f) - log_uni_width + torch.log(corr_f)).sum(dim=-1)
     p = torch.sigmoid(z)
     no_density = torch.any((p < torch.exp(log_uni_start)) |
                            (p > torch.exp(log_uni_end)),
@@ -64,11 +68,15 @@ def sample_trunc_log(trunc_params):
     z_0 = (torch.exp(log_uni_start) +
            torch.rand_like(trunc_params[..., 0]) * torch.exp(log_uni_width))
     z_1 = sigmoid_inv(z_0)
-    return z_1, truncated_density(z_1, trunc_params,
-                                  log_uni_start,
-                                  log_uni_end,
-                                  log_uni_width)
-
+    z_2 = z_1 / corr_f
+    # log_dens = truncated_density(z_2, trunc_params,
+    #                              log_uni_start,
+    #                              log_uni_end,
+    #                              log_uni_width)
+    log_dens = (density(z_1) - log_uni_width + torch.log(corr_f)).sum(-1)
+    # print(log_dens)
+    # print(log_dens_)
+    return z_2, log_dens
 class LinearCategoricalEncoding(FlowLayer):
     """
     Class for implementing the mixture model and linear flow encoding scheme of Categorical Normalizing Flows.
@@ -92,7 +100,7 @@ class LinearCategoricalEncoding(FlowLayer):
         print("Using truncated logistic")
         self.embed_layer, self.vocab_size = create_embed_layer(vocab, vocab_size, default_embed_layer_dims)
         self.bounds_emb = nn.Embedding(vocab_size, self.D * 3)
-        torch.nn.init.xavier_normal_(self.bounds_emb.weight)
+        torch.nn.init.zeros_(self.bounds_emb.weight)
 
         self.num_categories = self.vocab_size
 
@@ -246,21 +254,26 @@ class LinearCategoricalEncoding(FlowLayer):
         ## Calculate the denominator (sum of probabilities of all classes)
         flow_log_prob = back_log_p + ldj_backward
         log_prob_denominator = flow_log_prob.view(z_cont.size(0), self.num_categories) + self.category_prior[None, :]
-        print("Activated:",
-              (~zero_mask).view(z_cont.size(0), self.num_categories).float().sum(-1).mean().item())
+        if DEBUG:
+            print("Activated:",
+                  (~zero_mask).view(z_cont.size(0), self.num_categories).float().sum(-1).mean().item())
+        # print(log_point_prob)
+        # print(log_prob_denominator[torch.arange(z_cont.size(0)),
+        #                             z_categ[...,0]])
         # Replace log_prob of original class with forward probability
         # This improves stability and prevents the model to exploit numerical errors during inverting the flows
 
-        orig_class_mask = one_hot(z_categ.squeeze(), num_classes=log_prob_denominator.size(1))
-        log_prob_denominator = log_prob_denominator * (1 - orig_class_mask) + log_point_prob.unsqueeze(dim=-1) * orig_class_mask
+        # orig_class_mask = one_hot(z_categ.squeeze(), num_classes=log_prob_denominator.size(1))
+        # log_prob_denominator = log_prob_denominator * (1 - orig_class_mask) + log_point_prob.unsqueeze(dim=-1) * orig_class_mask
         # Denominator is the sum of probability -> turn log to exp, and back to log
-        log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
+        # log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
         ## Combine nominator and denominator for final prob log
-        class_prob_log = (log_point_prob - log_denominator)
+        # class_prob_log = (log_point_prob - log_denominator)
         # *** End *** 
-        # class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
-        #                                   reduction='none')
-        print(class_prob_log.mean())
+        class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
+                                          reduction='none')
+        if DEBUG:
+            print(class_prob_log.mean())
         return class_prob_log
 
     def _decoder_sample(self, z_cont, **kwargs):
