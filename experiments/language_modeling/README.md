@@ -7,7 +7,8 @@ This experiment folder summarizes the experiments on language modeling.
 To train a Categorical Normalizing Flow on Penn-Treebank, use the following command:
 ```
 python train.py --dataset penntreebank \
-                --max_iterations 100000 \
+                --max_iterations 25000 \
+                --eval_freq 500 \
                 --max_seq_len 288 \
                 --batch_size 128 \
                 --encoding_dim 3 \

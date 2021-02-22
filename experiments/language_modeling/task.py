@@ -34,12 +34,17 @@ class TaskLanguageModeling(TaskTemplate):
 		self.max_seq_len = get_param_val(self.model_params, "max_seq_len", allow_default=False)
 
 		dataset_name = get_param_val(self.model_params, "dataset", default_val="penntreebank")
-		dataset_class = TaskLanguageModeling.get_dataset_class(dataset_name)
+		self.dataset_class = TaskLanguageModeling.get_dataset_class(dataset_name)
 		print("Loading dataset %s..." % dataset_name)
 
-		self.train_dataset = dataset_class(max_seq_len=self.max_seq_len, train=True)
-		self.val_dataset = dataset_class(max_seq_len=self.max_seq_len, val=True)
-		self.test_dataset = dataset_class(max_seq_len=self.max_seq_len, test=True)
+		self.train_dataset = self.dataset_class(max_seq_len=self.max_seq_len, train=True)
+		self.val_dataset = self.dataset_class(max_seq_len=self.max_seq_len, val=True)
+		self.test_dataset = self.dataset_class(max_seq_len=self.max_seq_len, test=True)
+
+		if hasattr(self.dataset_class, "get_length_prior"):
+			self.length_prior = self.dataset_class.get_length_prior(max_seq_len=self.max_seq_len)
+		else:
+			self.length_prior = None
 		
 
 	@staticmethod
@@ -67,7 +72,7 @@ class TaskLanguageModeling(TaskTemplate):
 		logprob, details = self.model(x_in, reverse=False, length=x_length, channel_padding_mask=x_channel_mask)
 		self.summary_dict["log_prob"].append(-logprob.mean().item())
 		self._ldj_per_layer_to_summary([details])
-		loss = -logprob.mean()
+		loss, _, _ = self._class_loss(logprob.zeros_like(), -logprob, x_length)
 		return loss
 
 	def _train_batch_flow(self, x_in, x_length, x_channel_mask, iteration=0, **kwargs):
@@ -96,7 +101,7 @@ class TaskLanguageModeling(TaskTemplate):
 
 	def _eval_batch_rnn(self, x_in, x_length, x_channel_mask, **kwargs):
 		logprob, _ = self.model(x_in, reverse=False, length=x_length, channel_padding_mask=x_channel_mask)
-		loss = -logprob.mean()
+		loss, _, _ = self._class_loss(logprob.zeros_like(), -logprob, x_length)
 		return loss
 
 	def _eval_batch_flow(self, x_in, x_length, x_channel_mask, is_test=False, **kwargs):
@@ -109,9 +114,17 @@ class TaskLanguageModeling(TaskTemplate):
 
 
 	def _calc_loss(self, neg_ldj, neglog_prob, x_length):
-		neg_ldj = (neg_ldj / x_length.float())
-		neglog_prob = (neglog_prob / x_length.float())
-		loss = neg_ldj + neglog_prob
+		if self.length_prior is None:
+			neg_ldj = (neg_ldj / x_length.float())
+			neglog_prob = (neglog_prob / x_length.float())
+			loss = neg_ldj + neglog_prob
+		else:
+			neg_ldj = (neg_ldj / (x_length+1).float())
+			neglog_prob = (neglog_prob / (x_length+1).float())
+			# Prior for timestep
+			log_p_T = [self.length_prior[l]*1.0/(l+1) for l in x_length.detach().cpu().numpy()]
+			log_p_T = torch.FloatTensor(log_p_T).to(get_device())
+			loss = neg_ldj + neglog_prob + log_p_T
 
 		loss = loss.mean()
 		neg_ldj = neg_ldj.mean()
