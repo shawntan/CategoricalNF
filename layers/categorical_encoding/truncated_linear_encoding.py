@@ -15,15 +15,25 @@ from layers.flows.distributions import LogisticDistribution
 from layers.networks.help_layers import SimpleLinearLayer, LinearNet
 from layers.categorical_encoding.decoder import create_decoder, create_embed_layer
 
+
+# TODO
+# Check if they're computing ELBO or estimating log p(x)
+
 corr_f = torch.tensor(1.81)
 DEBUG = False
+# torch.autograd.set_detect_anomaly(DEBUG)
 
 def sigmoid_inv(p):
-    return torch.log(p) - torch.log(1 - p)
+    # return torch.log(p) - torch.log(1 - p)
+    return -torch.log(
+        torch.clamp(torch.reciprocal(torch.clamp(p, min=1e-8)) - 1, min=1e-8)
+    )
 
+inv_temp = 5.
 def params2bounds(trunc_params):
-    trunc_params[..., 1] = trunc_params[..., 1] + 2.5 * (1 / 0.1)
-    log_segments = torch.log_softmax(0.1 * trunc_params, dim=-1)
+    # trunc_params[..., 1] = trunc_params[..., 1] + 5 * (1 / 0.01)
+    trunc_params[..., 1] = trunc_params[..., 1] + (5 / inv_temp) # * (1 / 0.01)
+    log_segments = torch.log_softmax(trunc_params * inv_temp, dim=-1)
     log_uni_start = log_segments[..., 0]
     log_uni_width = log_segments[..., 1]
     start = sigmoid_inv(torch.exp(log_uni_start))
@@ -31,10 +41,12 @@ def params2bounds(trunc_params):
     log_uni_end = torch.log(uni_end)
     end = sigmoid_inv(uni_end)
     width = end - start
+
     if DEBUG:
         print((log_uni_start.exp().mean().item(), log_uni_start.exp().std().item()),
               (log_uni_width.exp().mean().item(), log_uni_width.exp().std().item()),
               (uni_end.mean().item(), uni_end.std().item()))
+
     return (start, end, width,
             log_uni_start,
             log_uni_end,
@@ -123,6 +135,7 @@ class LinearCategoricalEncoding(FlowLayer):
             self.num_categories, str(category_prior.shape))
             if isinstance(category_prior, np.ndarray):
                 category_prior = torch.from_numpy(category_prior)
+        # self.category_prior_ = nn.Parameter(category_prior)
         self.register_buffer("category_prior", F.log_softmax(category_prior, dim=-1))
 
     def z_bounds(self, z_categ):
@@ -251,7 +264,7 @@ class LinearCategoricalEncoding(FlowLayer):
         # back_log_p = self.prior_distribution.log_prob(z_back).sum(dim=[1, 2])
         # print(back_log_p.size())
 
-        ## Calculate the denominator (sum of probabilities of all classes)
+        # Calculate the denominator (sum of probabilities of all classes)
         flow_log_prob = back_log_p + ldj_backward
         log_prob_denominator = flow_log_prob.view(z_cont.size(0), self.num_categories) + self.category_prior[None, :]
         if DEBUG:
@@ -260,18 +273,19 @@ class LinearCategoricalEncoding(FlowLayer):
         # print(log_point_prob)
         # print(log_prob_denominator[torch.arange(z_cont.size(0)),
         #                             z_categ[...,0]])
+
         # Replace log_prob of original class with forward probability
         # This improves stability and prevents the model to exploit numerical errors during inverting the flows
-
-        # orig_class_mask = one_hot(z_categ.squeeze(), num_classes=log_prob_denominator.size(1))
-        # log_prob_denominator = log_prob_denominator * (1 - orig_class_mask) + log_point_prob.unsqueeze(dim=-1) * orig_class_mask
+        orig_class_mask = one_hot(z_categ.squeeze(), num_classes=log_prob_denominator.size(1))
+        log_prob_denominator = log_prob_denominator * (1 - orig_class_mask) + log_point_prob.unsqueeze(dim=-1) * orig_class_mask
         # Denominator is the sum of probability -> turn log to exp, and back to log
-        # log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
-        ## Combine nominator and denominator for final prob log
-        # class_prob_log = (log_point_prob - log_denominator)
+        # log_denominator = torch.logsumexp(F.pad(log_prob_denominator, (1, 0), 'constant', 0), dim=-1)
+        log_denominator = torch.logsumexp(log_prob_denominator, dim=-1)
+        # Combine nominator and denominator for final prob log
+        class_prob_log = (log_point_prob - log_denominator)
         # *** End *** 
-        class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
-                                          reduction='none')
+        # class_prob_log = -F.cross_entropy(log_prob_denominator, z_categ[..., 0],
+        #                                   reduction='none')
         if DEBUG:
             print(class_prob_log.mean())
         return class_prob_log
