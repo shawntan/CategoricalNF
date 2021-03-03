@@ -31,26 +31,11 @@ def sigmoid_inv(p):
 
 inv_temp = 5.
 def params2bounds(trunc_params):
-    # trunc_params[..., 1] = trunc_params[..., 1] + 5 * (1 / 0.01)
-    trunc_params[..., 1] = trunc_params[..., 1] + (5 / inv_temp) # * (1 / 0.01)
-    log_segments = torch.log_softmax(trunc_params * inv_temp, dim=-1)
-    log_uni_start = log_segments[..., 0]
-    log_uni_width = log_segments[..., 1]
-    start = sigmoid_inv(torch.exp(log_uni_start))
-    uni_end = torch.exp(log_uni_start) + torch.exp(log_uni_width)
-    log_uni_end = torch.log(uni_end)
-    end = sigmoid_inv(uni_end)
-    width = end - start
-
-    if DEBUG:
-        print((log_uni_start.exp().mean().item(), log_uni_start.exp().std().item()),
-              (log_uni_width.exp().mean().item(), log_uni_width.exp().std().item()),
-              (uni_end.mean().item(), uni_end.std().item()))
-
-    return (start, end, width,
-            log_uni_start,
-            log_uni_end,
-            log_uni_width)
+    log_uni_lr = torch.log_softmax(trunc_params[..., :-1], dim=-1)
+    log_uni_centre = log_uni_lr[..., 0]
+    log_uni_width = (F.logsigmoid(trunc_params[..., -1]) +
+                     torch.min(log_uni_lr, dim=-1)[0] + np.log(2))
+    return log_uni_centre, log_uni_width
 
 
 def density(z_0):
@@ -63,12 +48,14 @@ def truncated_density(z, trunc_params,
                       log_uni_width=None,
                       return_zero_mask=False):
     if log_uni_start is None or log_uni_end is None or log_uni_width is None:
-        _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(trunc_params)
+        log_uni_centre, log_uni_width = params2bounds(trunc_params)
     log_p_z_ = (density(z * corr_f) - log_uni_width + torch.log(corr_f)).sum(dim=-1)
     p = torch.sigmoid(z)
-    no_density = torch.any((p < torch.exp(log_uni_start)) |
-                           (p > torch.exp(log_uni_end)),
-                           dim=-1)
+    centre = torch.exp(log_uni_centre)
+    width = torch.exp(log_uni_width)
+    start = centre - 0.5 * width
+    end = centre + 0.5 * width
+    no_density = torch.any((p < start) | (p > end), dim=-1)
     log_p_z = log_p_z_.masked_fill(no_density, -64)
     if return_zero_mask:
         return log_p_z, no_density
@@ -76,9 +63,9 @@ def truncated_density(z, trunc_params,
         return log_p_z
 
 def sample_trunc_log(trunc_params):
-    _, _, _, log_uni_start, log_uni_end, log_uni_width = params2bounds(trunc_params)
-    z_0 = (torch.exp(log_uni_start) +
-           torch.rand_like(trunc_params[..., 0]) * torch.exp(log_uni_width))
+    log_uni_centre, log_uni_width = params2bounds(trunc_params)
+    z_0 = (torch.exp(log_uni_centre) +
+           torch.exp(log_uni_width) * (torch.rand_like(trunc_params[..., 0]) - 0.5))
     z_1 = sigmoid_inv(z_0)
     z_2 = z_1 / corr_f
     # log_dens = truncated_density(z_2, trunc_params,
