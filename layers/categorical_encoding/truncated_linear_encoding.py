@@ -33,8 +33,17 @@ inv_temp = 5.
 def params2bounds(trunc_params):
     log_uni_lr = torch.log_softmax(trunc_params[..., :-1], dim=-1)
     log_uni_centre = log_uni_lr[..., 0]
-    log_uni_width = (F.logsigmoid(trunc_params[..., -1]) +
+    log_uni_width = (F.logsigmoid(trunc_params[..., -1] + 3.) +
                      torch.min(log_uni_lr, dim=-1)[0] + np.log(2))
+    if DEBUG:
+        centre = torch.exp(log_uni_centre)
+        width = torch.exp(log_uni_width)
+        start = centre - 0.5 * width
+        end = centre + 0.5 * width
+        print((start.mean().item(), start.std().item()),
+              (end.mean().item(), end.std().item()))
+
+
     return log_uni_centre, log_uni_width
 
 

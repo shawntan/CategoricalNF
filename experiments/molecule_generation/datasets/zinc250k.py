@@ -1,17 +1,22 @@
+
+
 import torch
 import torch.utils.data as data
 import numpy as np 
 import pickle
 import os
 import sys
-sys.path.append("../../../")
 
+sys.path.append("../../../")
+from rdkit import Chem
 try:
 	from rdkit import Chem
 	ZINC250_BOND_DECODER = {1: Chem.rdchem.BondType.SINGLE, 2: Chem.rdchem.BondType.DOUBLE, 3: Chem.rdchem.BondType.TRIPLE}
 except:
 	print("[!] WARNING: rdkit could not be imported. No evaluation and visualizations of molecules will be possible.")
 	ZINC250_BOND_DECODER = {1: None, 2: None, 3: None}
+
+
 
 from general.mutils import one_hot
 from experiments.graph_coloring.datasets.mutils import BucketSampler
